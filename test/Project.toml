@@ -1,0 +1,5 @@
+[deps]
+ConstrainedPOMDPs = "7a9489b1-4b84-4e64-8108-bdcab6d54d2c"
+POMDPModels = "355abbd5-f08e-5560-ac9e-8b5f2592a0ca"
+POMDPTools = "7588e00f-9cae-40de-98dc-e0c70c48cdd7"
+ProgressMeter = "92933f4c-e287-5a05-a399-4b506db050ca"

@@ -9,11 +9,10 @@ Base.@kwdef struct ExponentiatedGradientSolver{EVAL, O<:NamedTuple} <: Solver
     η                   = 0.1
 end
 
-
 mutable struct ExponentiatedGradientSolverSolution <: Policy
     const C::Matrix{Float64}
     const V::Vector{Float64}
-    const dual_vectors::Vector{Float64}
+    const dual_vectors::Matrix{Float64}
     policy_idx::Int
     const problem::CGCPProblem
     const evaluator::Union{PolicyGraphEvaluator,RecursiveEvaluator,MCEvaluator}
@@ -35,23 +34,23 @@ end
 
 function POMDPs.solve(solver::ExponentiatedGradientSolver, pomdp::CPOMDP)
     t0 = time()
-    (;max_time, max_iter, evaluator, verbose, τ, pomdp_sol_options) = solver
+    (;max_time, max_iter, evaluator, verbose, pomdp_sol_options) = solver
     nc = constraint_size(pomdp)
     prob = CGCPProblem(pomdp, ones(nc), false)
-    pomdp_solver = HSVI4CGCP.SARSOPSolver(;max_time=τ, max_steps=solver.max_steps, pomdp_sol_options...)
+    pomdp_solver = HSVI4CGCP.SARSOPSolver(;max_time=max_time, max_steps=solver.max_steps, pomdp_sol_options...)
     
-    λ = solver.B/2
+    λ = [solver.B/2]
     iter = 0
 
-    ĉ = first(constraints(m.m))
+    ĉ = first(constraints(pomdp))
 
-    C = Matrix{Float64}
+    C = Matrix{Float64}(undef, 1, 0)
     V = Float64[]
-    λ_hist = Float64[]
+    λ_hist = Matrix{Float64}(undef, 1,0)
 
     while time() - t0 < max_time && iter < max_iter
+        η = sqrt(log(2)/2*iter*solver.B^2)
         iter += 1
-        pomdp_solver = HSVI4CGCP.SARSOPSolver(;max_time=τ,max_steps=solver.max_steps, pomdp_sol_options...)
         πt,v_ub = compute_policy(pomdp_solver,prob,λ)
         v_t, c_t = evaluate_policy(evaluator, prob, πt)
         
@@ -69,11 +68,17 @@ function POMDPs.solve(solver::ExponentiatedGradientSolver, pomdp::CPOMDP)
 
         C = hcat(C, c_t)
         V = push!(V, v_t)
-        λ_hist = push!(λ_hist, λ)
+        λ_hist = hcat(λ_hist, λ)
 
         #update lambda
-        λ = B*(λ*exp(-η*(ĉ - c_t)))/(B + λ*(exp(-η*(ĉ - c_t)) - 1)) #check if signs are correct
+        λ_old = first(λ)
+        λ = [solver.B*(λ_old*exp(-η*(ĉ - first(c_t))))/(solver.B + λ_old*(exp(-η*(ĉ - first(c_t))) - 1))] #check if signs are correct
     end
+
+    @show C
+    @show V
+    @show λ_hist
+
     return ExponentiatedGradientSolverSolution(C, V, λ_hist, 0, prob, evaluator)
 end
 
