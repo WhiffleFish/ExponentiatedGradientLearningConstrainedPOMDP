@@ -5,11 +5,12 @@ Base.@kwdef struct ExponentiatedGradientSolver{EVAL, O<:NamedTuple} <: Solver
     evaluator::EVAL     = PolicyGraphEvaluator(max_steps) #MCEvaluator()
     verbose::Bool       = false
     pomdp_sol_options::O= (;delta=0.75)
-    B                   = 10
-    η                   = 0.1
+    B::Float64          = 10.0
+    η::Float64          = 0.1
 end
 
 mutable struct ExponentiatedGradientSolverSolution <: Policy
+    const policy_vector::Vector{AlphaVectorPolicy}
     const C::Matrix{Float64}
     const V::Vector{Float64}
     const dual_vectors::Matrix{Float64}
@@ -21,7 +22,7 @@ end
 function compute_policy(sol, m::CGCPProblem, λ::Vector{Float64})
     m.λ = λ
     s_pol = solve(sol,m)
-    return  s_pol
+    return s_pol
 end
 
 function compute_policy(sol::HSVI4CGCP.SARSOPSolver, m::CGCPProblem, λ::Vector{Float64})
@@ -29,16 +30,16 @@ function compute_policy(sol::HSVI4CGCP.SARSOPSolver, m::CGCPProblem, λ::Vector{
     soln = solve_info(sol,m)
     s_pol = soln[1]
     ub = soln[2][:tree].V_upper[1]
-    return  s_pol, ub
+    return s_pol, ub
 end
 
 function POMDPs.solve(solver::ExponentiatedGradientSolver, pomdp::CPOMDP)
     t0 = time()
-    (;max_time, max_iter, evaluator, verbose, pomdp_sol_options) = solver
+    (;max_time, max_iter, evaluator, verbose, pomdp_sol_options, B) = solver
     nc = constraint_size(pomdp)
     prob = CGCPProblem(pomdp, ones(nc), false)
     pomdp_solver = HSVI4CGCP.SARSOPSolver(;max_time=max_time, max_steps=solver.max_steps, pomdp_sol_options...)
-    
+    Π = AlphaVectorPolicy[]
     λ = [solver.B/2]
     iter = 0
 
@@ -49,7 +50,7 @@ function POMDPs.solve(solver::ExponentiatedGradientSolver, pomdp::CPOMDP)
     λ_hist = Matrix{Float64}(undef, 1,0)
 
     while time() - t0 < max_time && iter < max_iter
-        η = sqrt(log(2)/2*iter*solver.B^2)
+        η = sqrt(log(2)/2*iter*B^2)
         iter += 1
         πt,v_ub = compute_policy(pomdp_solver,prob,λ)
         v_t, c_t = evaluate_policy(evaluator, prob, πt)
@@ -68,25 +69,26 @@ function POMDPs.solve(solver::ExponentiatedGradientSolver, pomdp::CPOMDP)
 
         C = hcat(C, c_t)
         V = push!(V, v_t)
+        push!(Π, πt)
         λ_hist = hcat(λ_hist, λ)
 
         #update lambda
         λ_old = first(λ)
         λ = [solver.B*(λ_old*exp(-η*(ĉ - first(c_t))))/(solver.B + λ_old*(exp(-η*(ĉ - first(c_t))) - 1))] #check if signs are correct
     end
+    if verbose
+        @show C
+        @show V
+        @show λ_hist
+    end
 
-    @show C
-    @show V
-    @show λ_hist
-
-    return ExponentiatedGradientSolverSolution(C, V, λ_hist, 0, prob, evaluator)
+    return ExponentiatedGradientSolverSolution(Π, C, V, λ_hist, 0, prob, evaluator)
 end
 
 reset!(p::ExponentiatedGradientSolverSolution) = p.policy_idx = 0
 
 function initialize!(p::ExponentiatedGradientSolverSolution)
-    probs = p.p_pi
-    p.policy_idx = rand(SparseCat(eachindex(probs), probs))
+    p.policy_idx = rand(eachindex(p.policy_vector))
     p
 end
 
@@ -100,11 +102,9 @@ function POMDPs.value(p::ExponentiatedGradientSolverSolution, b)
 end
 
 function probabilistic_value(p::ExponentiatedGradientSolverSolution, b)
-    v = 0.0
-    for (π_i, p_i) ∈ zip(p.policy_vector, p.p_pi)
-        v += p_i*evaluate_policy(p.evaluator, p.problem, π_i, b)[1]
-    end
-    return v
+    return sum(p.policy_vector) do πt
+        evaluate_policy(p.evaluator, p.problem, πt, b)[1]
+    end / length(p.policy_vector)
 end
 
 function deterministic_value(p::ExponentiatedGradientSolverSolution, b)
