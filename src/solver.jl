@@ -27,20 +27,19 @@ end
 
 function compute_policy(sol::HSVI4CGCP.SARSOPSolver, m::CGCPProblem, λ::Vector{Float64})
     m.λ = λ
-    soln = solve_info(sol,m)
-    s_pol = soln[1]
-    ub = soln[2][:tree].V_upper[1]
-    return s_pol, ub
+    pol, info = solve_info(sol,m)
+    ub = info[:tree].V_upper[1]
+    return pol, ub
 end
 
 function POMDPs.solve(solver::ExponentiatedGradientSolver, pomdp::CPOMDP)
     t0 = time()
     (;max_time, max_iter, evaluator, verbose, pomdp_sol_options, B) = solver
     nc = constraint_size(pomdp)
-    prob = CGCPProblem(pomdp, ones(nc), false)
+    prob = CGCPProblem(pomdp, ones(nc), true) # initialized=true --- OTHERWISE REWARDS ARE NEVER CONSIDERED
     pomdp_solver = HSVI4CGCP.SARSOPSolver(;max_time=max_time, max_steps=solver.max_steps, pomdp_sol_options...)
     Π = AlphaVectorPolicy[]
-    λ = [solver.B/2]
+    λ = [B/2]
     iter = 0
 
     ĉ = first(constraints(pomdp))
@@ -55,15 +54,14 @@ function POMDPs.solve(solver::ExponentiatedGradientSolver, pomdp::CPOMDP)
         πt,v_ub = compute_policy(pomdp_solver,prob,λ)
         v_t, c_t = evaluate_policy(evaluator, prob, πt)
         
+        λk = only(λ)
+        _c_t = only(c_t)
+
         verbose && println("""
             iteration $iter
-            c = $c_t
+            c = $_c_t
             v = $v_t
-            λ = $λ
-            τ = $τ
-            δ = $δ
-            ϕa = $ϕa
-            Δϕ = $(ϕu-ϕl)
+            λ = $λk
         ----------------------------------------------------
         """)
 
@@ -73,13 +71,10 @@ function POMDPs.solve(solver::ExponentiatedGradientSolver, pomdp::CPOMDP)
         λ_hist = hcat(λ_hist, λ)
 
         #update lambda
-        λ_old = first(λ)
-        λ = [solver.B*(λ_old*exp(-η*(ĉ - first(c_t))))/(solver.B + λ_old*(exp(-η*(ĉ - first(c_t))) - 1))] #check if signs are correct
-    end
-    if verbose
-        @show C
-        @show V
-        @show λ_hist
+        
+        λ = [ B * ( λk*exp(-η*(ĉ - _c_t)) )/
+            (B + λk*(exp(-η*(ĉ - _c_t)) - 1))
+        ] #check if signs are correct
     end
 
     return ExponentiatedGradientSolverSolution(Π, C, V, λ_hist, 0, prob, evaluator)
