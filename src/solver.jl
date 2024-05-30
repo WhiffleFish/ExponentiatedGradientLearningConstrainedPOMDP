@@ -1,10 +1,10 @@
 Base.@kwdef struct ExponentiatedGradientSolver{EVAL, O<:NamedTuple} <: Solver
     max_time::Float64   = 1e5
     max_iter::Int       = 100
-    max_steps::Int      = typemax(Int)
+    max_steps::Int      = 100
     evaluator::EVAL     = PolicyGraphEvaluator(max_steps) #MCEvaluator()
     verbose::Bool       = false
-    pomdp_sol_options::O= (;delta=0.75)
+    pomdp_sol_options::O= (;delta=0.75, max_time=max_time/100)
     B::Float64          = 10.0
     η::Float64          = 0.1
 end
@@ -37,7 +37,7 @@ function POMDPs.solve(solver::ExponentiatedGradientSolver, pomdp::CPOMDP)
     (;max_time, max_iter, evaluator, verbose, pomdp_sol_options, B) = solver
     nc = constraint_size(pomdp)
     prob = CGCPProblem(pomdp, ones(nc), true) # initialized=true --- OTHERWISE REWARDS ARE NEVER CONSIDERED
-    pomdp_solver = HSVI4CGCP.SARSOPSolver(;max_time=max_time, max_steps=solver.max_steps, pomdp_sol_options...)
+    pomdp_solver = HSVI4CGCP.SARSOPSolver(;max_steps=solver.max_steps, pomdp_sol_options...)
     Π = AlphaVectorPolicy[]
     λ = [B/2]
     iter = 0
@@ -51,7 +51,7 @@ function POMDPs.solve(solver::ExponentiatedGradientSolver, pomdp::CPOMDP)
     while time() - t0 < max_time && iter < max_iter
         η = sqrt(log(2)/2*iter*B^2)
         iter += 1
-        πt,v_ub = compute_policy(pomdp_solver,prob,λ)
+        πt, v_ub = compute_policy(pomdp_solver,prob,λ)
         v_t, c_t = evaluate_policy(evaluator, prob, πt)
         
         λk = only(λ)
