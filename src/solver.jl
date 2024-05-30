@@ -75,6 +75,20 @@ function POMDPs.solve(solver::ExponentiatedGradientSolver, pomdp::CPOMDP)
         λ = [ B * ( λk*exp(-η*(ĉ - _c_t)) )/
             (B + λk*(exp(-η*(ĉ - _c_t)) - 1))
         ] #check if signs are correct
+        if isnan(only(λ)) || isinf(only(λ))
+            @warn """
+                $(only(λ)) λ -- terminating
+                num : $(B * ( λk*exp(-η*(ĉ - _c_t)) ))
+                den : $(B + λk*(exp(-η*(ĉ - _c_t)) - 1))
+                --------------------------
+                B   = $B
+                λk  = $λk
+                η   = $η
+                ĉ   = $ĉ
+                _c_t= $_c_t
+            """
+            break
+        end
     end
 
     return ExponentiatedGradientSolverSolution(Π, C, V, λ_hist, 0, prob, evaluator)
